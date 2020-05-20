@@ -1,102 +1,84 @@
 """CPU functionality."""
-
 import sys
 
+PC = 4
+SP = 7
+
+START = 0b11110011
 
 HLT = 0b00000001
 LDI = 0b10000010
 PRN = 0b01000111
-MUL = 0b10100010
 PUSH = 0b01000101
 POP = 0b01000110
+CALL = 0b01010000
+RET = 0b00010001
+
+MUL = 0b10100010
+ADD = 0b10100000
 
 
 class CPU:
     """Main CPU class."""
 
     def __init__(self):
-        """Construct a new CPU."""
         self.ram = [None] * 256
         self.reg = [None] * 8
-        self.pc = 0
-        self.sp = 0
-        self.index = 0
-        self.functions = {
+        self.reg[PC] = 0
+        self.reg[SP] = START
+
+        self.operations = {
+            PRN: self.prn,
+            LDI: self.ldi,
             PUSH: self.push,
             POP: self.pop,
-            LDI: self.ldi,
-            PRN: self.prn,
-            MUL: self.mul,
+            CALL: self.call,
+            RET: self.ret,
         }
 
-    def ldi(self):
-        self.reg[self.ram_read(self.pc + 1)] = self.ram_read(self.pc + 2)
-        self.pc += 3
-        print("ldi reg:", self.reg)
-
-    def prn(self):
-        print(self.reg[self.ram_read(self.pc + 1)])
-        self.pc += 2
-
-    def mul(self):
-        self.alu("MUL", self.ram_read(self.pc + 1), self.ram_read(self.pc + 2))
-        self.pc += 3
-
-    def push(self):
-        self.pc -= 1
-        value = self.reg[self.index]
-        self.index += 1
-        print(f"Push value {value} into spot {self.index}")
-        self.ram_write(self.pc, value)
-
-    def pop(self):
-        target = operand[0]
-        value = self.ram_read(self.pc)
-        self.reg[target] = value
-        self.pc += 1
-
     def load(self, file):
-        """Load a program into memory."""
-
         address = 0
-
-        program = []
-
         with open(file) as f:
             for line in f:
                 line = line.split("#")
                 line = line[0].strip()
-                program.append(int(line, 2))
 
-            for command in program:
-                self.ram[address] = command
+                if line == "":
+                    continue
+                self.ram[address] = int(line, 2)
                 address += 1
 
-    def alu(self, op, reg_a, reg_b):
+    def alu(self, op, operands):
         """ALU operations."""
+        reg_a, reg_b = operands
 
-        if op == "ADD":
+        if op == ADD:
+            print("ADD")
+            print(f"{reg_a} is {self.reg[reg_a]}")
+            print(f"{reg_b} is {self.reg[reg_b]}")
             self.reg[reg_a] += self.reg[reg_b]
-        elif op == "MUL":
+            print("equals...")
+            print(f"{self.reg[reg_a]}")
+        elif op == MUL:
+            print("MUL")
+            print(f"{reg_a} is {self.reg[reg_a]}")
+            print(f"{reg_b} is {self.reg[reg_b]}")
             self.reg[reg_a] *= self.reg[reg_b]
+            print("equals...")
+            print(f"{self.reg[reg_a]}")
         else:
             raise Exception("Unsupported ALU operation")
 
     def trace(self):
-        """
-        Handy function to print out the CPU state. You might want to call this
-        from run() if you need help debugging.
-        """
-
         print(
             f"TRACE: %02X | %02X %02X %02X |"
             % (
-                self.pc,
+                self.reg[PC],
                 # self.fl,
                 # self.ie,
-                self.ram_read(self.pc),
-                self.ram_read(self.pc + 1),
-                self.ram_read(self.pc + 2),
+                self.ram_read(self.reg[PC]),
+                self.ram_read(self.reg[PC] + 1),
+                self.ram_read(self.reg[PC] + 2),
             ),
             end="",
         )
@@ -106,20 +88,91 @@ class CPU:
 
         print()
 
-    def run(self):
-        """Run the CPU."""
-        while self.ram_read(self.pc) != HLT:
-            command = self.ram_read(self.pc)
-            # print(command)
-            try:
-                self.functions[command]()
-            except Exception:
-                return print(f"Command: {command} was not found at index {self.pc}")
-
     def ram_read(self, key):
-        # print("RAM read:", key, self.ram[key])
         return self.ram[key]
 
     def ram_write(self, key, value):
-        # print(f"{value} written to {key} in RAM")
         self.ram[key] = value
+
+    def run(self):
+        halted = False
+        while not halted:
+            next_command = self.ram_read(self.reg[PC])
+            halted = self.execute(next_command)
+
+    def execute(self, command):
+        cmd = self.parse_command(command)
+        if command is HLT:
+            return True
+
+        num_ops, is_alu, sets_pc, cmd_id = cmd.values()
+        operands = [None] * num_ops
+
+        for i in range(len(operands)):
+            operand = self.ram_read(self.reg[PC] + i + 1)
+            operands[i] = operand
+        if is_alu:
+            self.alu(command, operands)
+        else:
+            self.operations[command](operands)
+
+        if not sets_pc:
+            self.reg[PC] += num_ops + 1
+
+        return False
+
+    def parse_command(self, cmd):
+        num_ops = int((0b11000000 & cmd) >> 6)
+        is_alu = bool((0b00100000 & cmd) >> 5)
+        sets_pc = bool((0b00010000 & cmd) >> 4)
+        cmd_id = 0b00001111 & cmd
+
+        return {
+            "num_ops": num_ops,
+            "is_alu": is_alu,
+            "sets_pc": sets_pc,
+            "cmd_id": cmd_id,
+        }
+
+    def prn(self, operand):
+        index = operand[0]
+        print("[prn] op_index", operand[0])
+        value = self.reg[index]
+        print(value)
+
+    def ldi(self, operands):
+        index, value = operands
+        print(f"[ldi] op's:// index: {index}, value: {value}")
+        self.reg[index] = value
+        print(f"[ldi] reg: {self.reg}")
+
+    def push(self, operand):
+        index = operand[0]
+        print("[push] op_index", operand[0])
+        self.reg[SP] -= 1
+        value = self.reg[index]
+        stack_address = self.reg[SP]
+        self.ram_write(stack_address, value)
+        print(f"[push] reg: {self.reg}")
+
+    def pop(self, operand):
+        index = operand[0]
+        print("[pop] op_index", operand[0])
+        stack_address = self.reg[SP]
+        value = self.ram_read(stack_address)
+        self.reg[index] = value
+        self.reg[SP] += 1
+        print(f"[pop] reg: {self.reg}")
+
+    def call(self, operand):
+        index = operand[0]
+        print("[call] op_index", operand[0])
+        self.reg[PC] += 2
+        self.push([PC])
+        sub_routine_address = self.reg[index]
+        self.reg[PC] = sub_routine_address
+        print(f"[call] reg: {self.reg}")
+
+    def ret(self, operand):
+        self.pop([PC])
+        print(f"[ret] reg: {self.reg}")
